@@ -120,6 +120,11 @@ module type S = sig
 
 		val get_device_action_request: Vm.id -> Vbd.t -> device_action_request option
 	end
+	module USB :sig 
+		val insert: Xenops_task.task_handle -> Vm.id -> Usb.t -> unit
+		val eject: Xenops_task.task_handle -> Vm.id -> Usb.t -> unit
+		val get_state: Vm.id -> Usb.t -> Usb.state
+	end
 	module VIF : sig
 		val set_active: Xenops_task.task_handle -> Vm.id -> Vif.t -> bool -> unit
 		val plug: Xenops_task.task_handle -> Vm.id -> Vif.t -> unit

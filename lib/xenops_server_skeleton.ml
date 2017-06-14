@@ -97,6 +97,11 @@ module VBD = struct
 	let get_state _ _ = unplugged_vbd
 	let get_device_action_request _ _ = None
 end
+module USB = struct 
+	let insert _ _ _  = unimplemented "VBD.insert"
+	let eject _ _ _ = unimplemented "VBD.eject" 
+	let get_state _ _ = unplugged_usb
+end
 module VIF = struct
 	let set_active _ _ _ _ = ()
 	let plug _ _ _ = unimplemented "VIF.plug"

@@ -271,7 +271,24 @@ let vbd_state vm vbd () =
 				}
 			| [] -> unplugged_vbd
 			| _ -> assert false (* at most one *)
-				
+
+(* here just return unplugged_usb for test *)
+let usb_state vm usb () =
+	unplugged_usb
+(*let usb_state vm usb () =
+	if not (DB.exists vm)
+	then unplugged_usb
+	else
+		let d = DB.read_exn vm in
+		let this_one x = x.Usb.id = usb.Usb.id in
+		match List.filter this_one d.Domain.usbs with
+			| [ usb ] ->
+				{
+					unplugged_usb with
+						Usb.plugged = true;
+				}
+			| [] -> unplugged_usb
+			| _ -> assert false (* at most one *)*)
 
 let vif_state vm vif () =
 	if not (DB.exists vm)
@@ -424,6 +441,12 @@ module VBD = struct
 	let get_state vm vbd = Mutex.execute m (vbd_state vm vbd)
 
 	let get_device_action_request vm vbd = None
+end
+
+module USB = struct
+	let insert _ vm usb = ()
+	let eject _ vm usb = ()
+	let get_state vm usb = Mutex.execute m (usb_state vm usb)
 end
 
 module VIF = struct

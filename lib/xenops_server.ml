@@ -76,6 +76,8 @@ type atomic =
 	| VBD_unplug of Vbd.id * bool
 	| VBD_insert of Vbd.id * disk
 	| VBD_set_active of Vbd.id * bool
+	| USB_insert of Usb.id
+	| USB_eject of Usb.id
 	| VM_remove of Vm.id
 	| PCI_plug of Pci.id
 	| PCI_unplug of Pci.id
@@ -248,6 +250,41 @@ module VBD_DB = struct
 		Mutex.execute m
 			(fun () ->
 				Updates.remove (Dynamic.Vbd id) updates;
+				remove id
+			)
+end
+
+module USB_DB = struct
+	include TypedTable(struct
+		include Usb
+		let namespace = "VM"
+		type key = id
+		let key k = [ fst k; "usb." ^ (snd k) ]
+	end)
+	let vm_of = fst
+	let string_of_id (a, b) = a ^ "." ^ b
+
+	let ids vm : Usb.id list =
+		list [ vm ] |> (filter_prefix "usb.") |> List.map (fun id -> (vm, id))
+	let usbs vm = ids vm |> List.map read |> dropnone
+	let list vm =
+		debug "USB.list";
+		let usbs' = usbs vm in
+		let module B = (val get_backend () : S) in
+		let states = List.map (B.USB.get_state vm) usbs' in
+		List.combine usbs' states
+	let m = Mutex.create ()
+	let signal id =
+		debug "USB_DB.signal %s" (string_of_id id);
+		Mutex.execute m
+			(fun () ->
+				if exists id
+				then Updates.add (Dynamic.Usb id) updates
+			)
+	let remove id =
+		Mutex.execute m
+			(fun () ->
+				Updates.remove (Dynamic.Usb id) updates;
 				remove id
 			)
 end
@@ -751,6 +788,7 @@ let export_metadata vdi_map vif_map id =
 	let vifs = List.map (fun vif -> remap_vif vif_map vif) (VIF_DB.vifs id) in
 	let pcis = PCI_DB.pcis id in
 	let vgpus = VGPU_DB.vgpus id in
+(*	let usbs = USB_DB.usbs id in*)
 	let domains = B.VM.get_internal_state vdi_map vif_map vm_t in
 
 
@@ -765,6 +803,7 @@ let export_metadata vdi_map vif_map id =
 		vifs = vifs;
 		pcis = pcis;
 		vgpus = vgpus;
+		(*usbs = usbs;*)
 		domains = Some domains;
 	} |> Metadata.rpc_of_t |> Jsonrpc.to_string
 
@@ -1142,6 +1181,26 @@ let rec perform_atomic ~progress_callback ?subtask ?result (op: atomic) (t: Xeno
 					VBD_DB.signal id
 				| _ -> raise (Bad_power_state(power, Running))
 			end
+		| USB_insert id ->
+		    debug "USB.insert %s" (USB_DB.string_of_id id);
+		    let usb_t = USB_DB.read_exn id in
+			let power = (B.VM.get_state (VM_DB.read_exn (fst id))).Vm.power_state in
+			begin match power with
+				| Running ->
+					B.USB.insert t (USB_DB.vm_of id) usb_t;
+					USB_DB.signal id
+				| _ -> raise (Bad_power_state(power, Running))
+			end
+        | USB_eject id ->
+            debug "USB.eject %s" (USB_DB.string_of_id id);
+            let usb_t = USB_DB.read_exn id in
+			let power = (B.VM.get_state (VM_DB.read_exn (fst id))).Vm.power_state in
+			begin match power with
+				| Running ->
+					B.USB.eject t (USB_DB.vm_of id) usb_t;
+					USB_DB.signal id
+				| _ -> raise (Bad_power_state(power, Running))
+			end
 		| VM_remove id ->
 			debug "VM.remove %s" id;
 			let vm_t = VM_DB.read_exn id in
@@ -1154,6 +1213,7 @@ let rec perform_atomic ~progress_callback ?subtask ?result (op: atomic) (t: Xeno
 					List.iter (fun vif -> VIF_DB.remove vif.Vif.id) (VIF_DB.vifs id);
 					List.iter (fun pci -> PCI_DB.remove pci.Pci.id) (PCI_DB.pcis id);
 					List.iter (fun vgpu -> VGPU_DB.remove vgpu.Vgpu.id) (VGPU_DB.vgpus id);
+					(*List.iter (fun usb -> USB_DB.remove usb.Usb.id) (USB_DB.usbs id);*)
 					VM_DB.remove id
 			end
 		| PCI_plug id ->
@@ -1381,7 +1441,8 @@ and trigger_cleanup_after_failure_atom op t =
 		| VBD_unplug (id, _)
 		| VBD_insert (id, _) ->
 			immediate_operation dbg (fst id) (VBD_check_state id)
-
+		| USB_eject id
+		| USB_insert id
 		| VIF_plug id
 		| VIF_set_active (id, _)
 		| VIF_unplug (id, _)
@@ -1867,6 +1928,56 @@ module VBD = struct
 				DB.list vm) ()
 end
 
+module USB = struct
+	open Usb
+
+	module DB = USB_DB
+	let string_of_id (a, b) = a ^ "." ^ b
+	let add' x =
+		debug "USB.add %s %s" (string_of_id x.id) (Jsonrpc.to_string (rpc_of_t x));
+		(* Only if the corresponding VM actually exists *)
+		let vm = DB.vm_of x.id in
+		if not (VM_DB.exists vm) then begin
+			debug "VM %s not managed by me" vm;
+			raise (Does_not_exist("VM", vm));
+		end;
+		DB.write x.id x;
+		x.id
+	let add _ dbg x =
+		Debug.with_thread_associated dbg
+			(fun () -> add' x ) ()
+
+	let insert _ dbg id  = queue_operation dbg (DB.vm_of id) (Atomic(USB_insert id))
+	let eject _ dbg id = queue_operation dbg (DB.vm_of id) (Atomic(USB_eject id))
+	let remove' id =
+		debug "USB.remove %s" (string_of_id id);
+		let module B = (val get_backend () : S) in
+		if (B.USB.get_state (DB.vm_of id) (USB_DB.read_exn id)).Usb.plugged
+		then raise (Device_is_connected)
+		else (DB.remove id)
+	let remove _ dbg id =
+		Debug.with_thread_associated dbg
+			(fun () -> remove' id ) ()
+
+	let stat' id =
+		debug "USB.stat %s" (string_of_id id);
+		let module B = (val get_backend () : S) in
+		let usb_t = USB_DB.read_exn id in
+		let state = B.USB.get_state (DB.vm_of id) usb_t in
+		usb_t, state
+
+	let stat _ dbg id =
+		Debug.with_thread_associated dbg
+			(fun () ->
+				(stat' id)) ()
+
+	let list _ dbg vm =
+		Debug.with_thread_associated dbg
+			(fun () ->
+				debug "USB.list %s" vm;
+				DB.list vm) ()
+end
+
 module VIF = struct
 	open Vif
 
@@ -2177,6 +2288,7 @@ module VM = struct
 				let vifs = List.map (fun x -> { x with Vif.id = (vm, snd x.Vif.id) }) md.Metadata.vifs in
 				let pcis = List.map (fun x -> { x with Pci.id = (vm, snd x.Pci.id) }) md.Metadata.pcis in
 				let vgpus = List.map (fun x -> {x with Vgpu.id = (vm, snd x.Vgpu.id) }) md.Metadata.vgpus in
+				(*let usbs = List.map (fun x -> {x with Usb.id = (vm, snd x.Usb.id) }) md.Metadata.usbs in*)
 
 				(* Remove any VBDs, VIFs, PCIs and VGPUs not passed in - they must have been destroyed in the higher level *)
 
@@ -2190,11 +2302,14 @@ module VM = struct
 				gc (VIF_DB.ids id) (List.map (fun x -> x.Vif.id) vifs) (VIF.remove');
 				gc (PCI_DB.ids id) (List.map (fun x -> x.Pci.id) pcis) (PCI.remove');
 				gc (VGPU_DB.ids id) (List.map (fun x -> x.Vgpu.id) vgpus) (VGPU.remove');
+				(*gc (USB_DB.ids id) (List.map (fun x -> x.Usb.id) usbs) (USB.remove');*)
+
 
 				let (_: Vbd.id list) = List.map VBD.add' vbds in
 				let (_: Vif.id list) = List.map VIF.add' vifs in
 				let (_: Pci.id list) = List.map PCI.add' pcis in
 				let (_: Vgpu.id list) = List.map VGPU.add' vgpus in
+				(*let (_: Usb.id list) = List.map USB.add' usbs in*)
 				md.Metadata.domains |> Opt.iter (B.VM.set_internal_state (VM_DB.read_exn vm));
 				vm
 			) ()
@@ -2243,6 +2358,7 @@ module UPDATES = struct
 						| Dynamic.Task _ -> false
 						| Dynamic.Vm id
 						| Dynamic.Vbd (id,_)
+						| Dynamic.Usb (id,_)
 						| Dynamic.Vif (id,_)
 						| Dynamic.Pci (id,_)
 						| Dynamic.Vgpu (id,_) -> id=vm_id

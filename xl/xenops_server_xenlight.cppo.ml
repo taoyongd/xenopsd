@@ -684,6 +684,12 @@ module VGPU = struct
 	let get_state vm vgpu = failwith "Not implemented"
 end
 
+module USB = struct
+    let insert _ vm usb = ()
+	let eject _ vm usb = ()
+	let get_state vm usb = failwith "Not implemented"
+end
+
 let set_active_device path active =
 	with_xs
 		(fun xs ->

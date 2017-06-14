@@ -632,6 +632,45 @@ let media_is_ejected ~xs device =
 
 end
 
+module Usb = struct
+
+let qemu_usb_insert ~xs ~domid ~usbid ~hostbus ~hostaddr =
+
+    debug "Usb inserted: usb device inserted ";
+	try
+		let c = Qmp_protocol.connect (Printf.sprintf "/var/run/xen/qmp-libxl-%d" domid) in
+		Qmp_protocol.negotiate c;
+
+		let driver = "usb-ehci" in
+		let driver_id = "ehci" in
+		let bus = "ehci.0" in
+		let usb_host = "usb-host" in
+	    Qmp_protocol.write c (Qmp.Command(None, Qmp.UsbType_add (driver, driver_id)));
+	    Qmp_protocol.write c (Qmp.Command(None, Qmp.UsbDevice_add (usb_host, usbid, bus, hostbus, hostaddr)));
+
+		Qmp_protocol.close c
+	with _ -> ()
+
+let qemu_usb_eject ~xs ~domid ~usbid =
+
+    debug "Usb ejected: usb device ejected";
+	try
+		let c = Qmp_protocol.connect (Printf.sprintf "/var/run/xen/qmp-libxl-%d" domid) in
+		Qmp_protocol.negotiate c;
+
+		Qmp_protocol.write c (Qmp.Command(None, Qmp.UsbDevice_del (usbid)));
+
+		Qmp_protocol.close c
+	with _ -> ()
+
+let usb_insert ~xs ~domid ~usbid ~hostbus ~hostaddr =
+	qemu_usb_insert ~xs ~domid ~usbid ~hostbus ~hostaddr
+
+let usb_eject ~xs ~domid ~usbid =
+	qemu_usb_eject ~xs ~domid ~usbid
+
+end
+
 (****************************************************************************************)
 (** VIFs:                                                                               *)
 

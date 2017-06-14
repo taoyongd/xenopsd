@@ -563,6 +563,11 @@ let unplugged_vbd = {
     backend_present = None;
 }
  
+let unplugged_usb = {
+	Usb.plugged = false;
+	Usb.active = false;
+}
+
 let unplugged_vif = {
      Vif.active = false;
      plugged = false;

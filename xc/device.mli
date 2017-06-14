@@ -88,6 +88,12 @@ sig
 	val move : xs:Xenstore.Xs.xsh -> device -> string -> unit
 end
 
+module Usb :
+sig
+	val usb_insert : xs:Xenstore.Xs.xsh -> domid:Xenctrl.domid -> usbid:string -> hostbus:string -> hostaddr: string -> unit
+	val usb_eject : xs:Xenstore.Xs.xsh -> domid:Xenctrl.domid -> usbid:string -> unit
+end
+
 val clean_shutdown : Xenops_task.task_handle -> xs:Xenstore.Xs.xsh -> device -> unit
 val hard_shutdown  : Xenops_task.task_handle  -> xs:Xenstore.Xs.xsh -> device -> unit
 

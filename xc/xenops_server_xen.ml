@@ -1924,6 +1924,35 @@ let set_active_device path active =
 			else safe_rm xs path;
 		)
 
+module USB = struct
+	open Usb
+	let id_of usb =snd usb.id
+
+	let get_state vm usb =
+		on_frontend
+			(fun _ xs frontend_domid _ ->
+				let emulator_pid = Device.Qemu.pid ~xs frontend_domid in
+				match emulator_pid with
+				| Some pid -> {plugged = true; active = true}
+				| None -> {plugged = false; active = false})
+			Newest vm
+
+	let insert task vm usb =
+		on_frontend
+			(fun xc xs frontend_domid hvm ->
+				if not hvm
+				then info "VM = %s; usb device will no insert to  a PV guest" vm
+				else
+					Device.Usb.usb_insert ~xs ~domid:frontend_domid ~usbid:(fst usb.Usb.id) ~hostbus:usb.Usb.hostbus ~hostaddr:usb.Usb.hostaddr
+			) Newest vm
+
+	let eject task vm usb =
+		on_frontend
+			(fun xc xs frontend_domid hvm ->
+				Device.Usb.usb_eject ~xs ~domid:frontend_domid ~usbid:(fst usb.Usb.id)
+			) Newest vm
+end
+
 module VBD = struct
 	open Vbd
 
